@@ -18,6 +18,7 @@ def save_checkpoints(self):
             'ImageTransformer': self.ImageTransformer.state_dict(),
             'TextTransformer': self.TextTransformer.state_dict(),
             'CrossAttention': self.CrossAttention.state_dict(),
+            'FusionMlp': self.FusionMlp.state_dict(),
             'ImageMlp': self.ImageMlp.state_dict(),
             'TextMlp': self.TextMlp.state_dict()
         }
@@ -41,5 +42,9 @@ def load_checkpoints(self, file_name):
     self.CrossAttention.load_state_dict(obj['CrossAttention'])
     
     if self.task == 3:  # test hash
-        self.ImageMlp.load_state_dict(obj['ImageMlp'])
-        self.TextMlp.load_state_dict(obj['TextMlp'])
+        if 'FusionMlp' in obj:
+            self.FusionMlp.load_state_dict(obj['FusionMlp'])
+        if 'ImageMlp' in obj:
+            self.ImageMlp.load_state_dict(obj['ImageMlp'])
+        if 'TextMlp' in obj:
+            self.TextMlp.load_state_dict(obj['TextMlp'])
