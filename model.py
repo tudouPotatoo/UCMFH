@@ -151,13 +151,15 @@ class FusionMlp(nn.Module):
         self.fc2 = nn.Linear(2048, hash_lens)
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(0.3)
+        self.tanh = nn.Tanh()  # ✅ 添加Tanh激活函数，输出范围[-1, 1]
         
     def forward(self, x):  
         x = self.fc1(x)
         x = self.relu(x)
         x = self.dropout(x)
         x = self.fc2(x)
-        return normalize(x, p=2, dim=1)
+        x = self.tanh(x)  # ✅ 使用Tanh激活，确保输出在[-1, 1]
+        return x  # ✅ 移除normalize，直接返回Tanh输出
 
 
 class ImageMlp(nn.Module):
