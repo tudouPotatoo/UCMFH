@@ -2,35 +2,44 @@ import torch
 from os import path as osp
 
 def save_checkpoints(self):
-    if self.task ==0:
+    """保存模型检查点"""
+    if self.task == 0:
         file_name = self.dataset + '_fusion.pth'
         ckp_path = osp.join(self.model_dir, 'real', file_name)
         obj = {
-        'FusionTransformer': self.FuseTrans.state_dict()
+            'ImageTransformer': self.ImageTransformer.state_dict(),
+            'TextTransformer': self.TextTransformer.state_dict(),
+            'CrossAttention': self.CrossAttention.state_dict()
         }
-    if self.task ==1:
-        file_name = self.dataset + '_hash_' + str(self.nbits)+".pth"
+    elif self.task == 1:
+        file_name = self.dataset + '_hash_' + str(self.nbits) + ".pth"
         ckp_path = osp.join(self.model_dir, 'hash', file_name)
         obj = {
-        'FusionTransformer': self.FuseTrans.state_dict(),
-        'ImageMlp': self.ImageMlp.state_dict(),
-        'TextMlp': self.TextMlp.state_dict()
+            'ImageTransformer': self.ImageTransformer.state_dict(),
+            'TextTransformer': self.TextTransformer.state_dict(),
+            'CrossAttention': self.CrossAttention.state_dict(),
+            'ImageMlp': self.ImageMlp.state_dict(),
+            'TextMlp': self.TextMlp.state_dict()
         }
     torch.save(obj, ckp_path)
-    print('**********Save the {0} model successfully.**********'.format("real" if self.task==0 else "hash"))
+    print(f'✅ Save the {"real" if self.task==0 else "hash"} model successfully to {ckp_path}')
 
 
 def load_checkpoints(self, file_name):
+    """加载模型检查点"""
     ckp_path = file_name
     try:
-        obj = torch.load(ckp_path, map_location= self.device)
-        print('**************** Load checkpoint %s ****************' % ckp_path)
+        obj = torch.load(ckp_path, map_location=self.device)
+        print(f'✅ Load checkpoint from {ckp_path}')
     except IOError:
-        print('********** Fail to load checkpoint %s!*********' % ckp_path)
+        print(f'❌ Fail to load checkpoint {ckp_path}!')
         raise IOError
-    if self.task==2:
-        self.FuseTrans.load_state_dict(obj['FusionTransformer'])
-    elif self.task==3:
-        self.FuseTrans.load_state_dict(obj['FusionTransformer'])
+    
+    # 加载各个组件
+    self.ImageTransformer.load_state_dict(obj['ImageTransformer'])
+    self.TextTransformer.load_state_dict(obj['TextTransformer'])
+    self.CrossAttention.load_state_dict(obj['CrossAttention'])
+    
+    if self.task == 3:  # test hash
         self.ImageMlp.load_state_dict(obj['ImageMlp'])
         self.TextMlp.load_state_dict(obj['TextMlp'])

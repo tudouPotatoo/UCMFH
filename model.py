@@ -144,44 +144,35 @@ class FuseTransEncoder(nn.Module):
 
 
 class ImageMlp(nn.Module):
-    def __init__(self, input_dim, hash_lens, dim_feedforward=[1024,128,1024], dropout=0.1):
+    """图像哈希映射网络"""
+    def __init__(self, input_dim=512, hash_lens=64):
         super(ImageMlp, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 4096)
+        self.fc1 = nn.Linear(input_dim, 1024)
+        self.fc2 = nn.Linear(1024, hash_lens)
         self.relu = nn.ReLU(inplace=True)
-        self.dp = nn.Dropout(0.3)
-        self.tohash = nn.Linear(4096, hash_lens)
-        self.tanh = nn.Tanh()
-    def _ff_block(self, x):
-        x = normalize(x, p =2 ,dim =1)
-        feat = self.relu(self.fc1(x))
-        hid = self.tohash(self.dp(feat))
-        out = self.tanh(hid)
-        return out
+        self.dropout = nn.Dropout(0.3)
         
-    def forward(self, X):  
-        mlp_output = self._ff_block(X)
-        mlp_output = normalize(mlp_output, p =2 ,dim =1)
-        return mlp_output
+    def forward(self, x):  
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return normalize(x, p=2, dim=1)
 
 class TextMlp(nn.Module):
-    def __init__(self, input_dim, hash_lens, dim_feedforward=[1024,128,1024], dropout=0.1): 
+    """文本哈希映射网络"""
+    def __init__(self, input_dim=512, hash_lens=64):
         super(TextMlp, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 4096)
+        self.fc1 = nn.Linear(input_dim, 1024)
+        self.fc2 = nn.Linear(1024, hash_lens)
         self.relu = nn.ReLU(inplace=True)
-        self.dp = nn.Dropout(0.3)
-        self.tohash = nn.Linear(4096, hash_lens)
-        self.tanh = nn.Tanh()
-       
-    def _ff_block(self, x):
-        x = normalize(x, p =2 ,dim =1)
-        feat = self.relu(self.fc1(x))
-        hid = self.tohash(self.dp(feat))
-        out = self.tanh(hid)
-        return out
+        self.dropout = nn.Dropout(0.3)
         
-    def forward(self, X):  
-        mlp_output =  self._ff_block(X)
-        mlp_output = normalize(mlp_output, p =2 ,dim =1)
-        return mlp_output
+    def forward(self, x):  
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return normalize(x, p=2, dim=1)
 
 

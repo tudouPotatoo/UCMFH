@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from evaluate import  calculate_top_map
 from load_dataset import  load_dataset
 from metric import ContrastiveLoss
-from model import FuseTransEncoder, ImageMlp, TextMlp
+from model import UnimodalTransformer, CrossAttentionFusion, ImageMlp, TextMlp
 from os import path as osp
 from utils import load_checkpoints, save_checkpoints
 from torch.optim import lr_scheduler
@@ -25,21 +25,33 @@ class Solver(object):
         self.task = config.task
         self.feat_lens = 512
         self.nbits = config.hash_lens
-        num_layers, self.token_size, nhead = 2, 1024, 4
  
-        self.FuseTrans = FuseTransEncoder(num_layers, self.token_size, nhead).to(self.device)
-        self.ImageMlp = ImageMlp(self.feat_lens, self.nbits).to(self.device)
-        self.TextMlp = TextMlp(self.feat_lens, self.nbits).to(self.device)
+        # ✅ 新架构：直接实例化各个组件
+        self.ImageTransformer = UnimodalTransformer(d_model=512, num_layers=2).to(self.device)
+        self.TextTransformer = UnimodalTransformer(d_model=512, num_layers=2).to(self.device)
+        self.CrossAttention = CrossAttentionFusion(d_model=512, nhead=8).to(self.device)
+        self.ImageMlp = ImageMlp(input_dim=512, hash_lens=self.nbits).to(self.device)
+        self.TextMlp = TextMlp(input_dim=512, hash_lens=self.nbits).to(self.device)
         
-        paramsFuse_to_update = list(self.FuseTrans.parameters()) 
-        paramsImage = list(self.ImageMlp.parameters()) 
-        paramsText = list(self.TextMlp.parameters()) 
+        # 优化器配置
+        params_fusion = (
+            list(self.ImageTransformer.parameters()) + 
+            list(self.TextTransformer.parameters()) + 
+            list(self.CrossAttention.parameters())
+        )
+        params_image = list(self.ImageMlp.parameters())
+        params_text = list(self.TextMlp.parameters())
         
-        total_param = sum([param.nelement() for param in paramsFuse_to_update])+sum([param.nelement() for param in paramsImage])+sum([param.nelement() for param in paramsText])
-        print("total_param:",total_param)
-        self.optimizer_FuseTrans = optim.Adam(paramsFuse_to_update, lr=1e-4, betas=(0.5, 0.999))
-        self.optimizer_ImageMlp = optim.Adam(paramsImage, lr=1e-3, betas=(0.5, 0.999))
-        self.optimizer_TextMlp = optim.Adam(paramsText, lr=1e-3, betas=(0.5, 0.999))
+        total_param = (
+            sum([p.nelement() for p in params_fusion]) +
+            sum([p.nelement() for p in params_image]) +
+            sum([p.nelement() for p in params_text])
+        )
+        print(f"Total parameters: {total_param:,}")
+        
+        self.optimizer_Fusion = optim.Adam(params_fusion, lr=1e-4, betas=(0.5, 0.999))
+        self.optimizer_ImageMlp = optim.Adam(params_image, lr=1e-3, betas=(0.5, 0.999))
+        self.optimizer_TextMlp = optim.Adam(params_text, lr=1e-3, betas=(0.5, 0.999))
 
         if self.dataset == "mirflickr" or self.dataset=="nus-wide":
             self.ImageMlp_scheduler = lr_scheduler.MultiStepLR(self.optimizer_ImageMlp,milestones=[30,80], gamma=1.2)
@@ -105,35 +117,48 @@ class Solver(object):
         return (img2text + text2img)/2., img2text, text2img
       
     def evaluate(self):
-        self.FuseTrans.eval()
+        self.ImageTransformer.eval()
+        self.TextTransformer.eval()
+        self.CrossAttention.eval()
         self.ImageMlp.eval()
         self.TextMlp.eval()
+        
         qu_BI, qu_BT, qu_L = [], [], []
         re_BI, re_BT, re_L = [], [], []
       
         with torch.no_grad():
+            # Query set
             for _,(data_I, data_T, data_L,_) in enumerate(self.query_loader):
                 data_I, data_T = data_I.to(self.device), data_T.to(self.device)
-                temp_tokens = torch.concat((data_I, data_T), dim = 1)
-                img_query ,txt_query =  self.FuseTrans(temp_tokens)
+                
+                # ✅ 直接调用各组件，无需concat
+                img_enhanced = self.ImageTransformer(data_I)
+                text_enhanced = self.TextTransformer(data_T)
+                img_query, txt_query = self.CrossAttention(img_enhanced, text_enhanced)
+                
                 if self.task == 1 or self.task == 3:
                     img_query = self.ImageMlp(img_query)
                     txt_query = self.TextMlp(txt_query)
-                img_query, txt_query = img_query.cpu().numpy(), txt_query.cpu().numpy()
-                qu_BI.extend(img_query)
-                qu_BT.extend(txt_query)
-                qu_L.extend(data_L.cpu().numpy())  
+                
+                qu_BI.extend(img_query.cpu().numpy())
+                qu_BT.extend(txt_query.cpu().numpy())
+                qu_L.extend(data_L.cpu().numpy())
 
+            # Retrieval set
             for _,(data_I, data_T, data_L,_) in enumerate(self.retrieval_loader):
                 data_I, data_T = data_I.to(self.device), data_T.to(self.device)
-                temp_tokens = torch.concat((data_I, data_T), dim = 1)
-                img_retrieval ,txt_retrieval =  self.FuseTrans(temp_tokens)
+                
+                # ✅ 直接调用各组件
+                img_enhanced = self.ImageTransformer(data_I)
+                text_enhanced = self.TextTransformer(data_T)
+                img_retrieval, txt_retrieval = self.CrossAttention(img_enhanced, text_enhanced)
+                
                 if self.task ==1 or self.task ==3:
                     img_retrieval = self.ImageMlp(img_retrieval)
                     txt_retrieval = self.TextMlp(txt_retrieval)
-                img_retrieval, txt_retrieval = img_retrieval.cpu().numpy(), txt_retrieval.cpu().numpy()
-                re_BI.extend(img_retrieval)
-                re_BT.extend(txt_retrieval)
+                
+                re_BI.extend(img_retrieval.cpu().numpy())
+                re_BT.extend(txt_retrieval.cpu().numpy())
                 re_L.extend(data_L.cpu().numpy())
         
         re_BI = np.array(re_BI)
@@ -160,45 +185,74 @@ class Solver(object):
         return MAP_I2T, MAP_T2I 
     
     def trainfusion(self):
-        self.FuseTrans.train()
-        running_loss = 0.0
-        for idx, (img, txt, _,_) in enumerate(self.train_loader):
-            temp_tokens = torch.concat((img, txt), dim = 1).to(self.device)
-            temp_tokens = temp_tokens.unsqueeze(0)
-            img_embedding, text_embedding = self.FuseTrans(temp_tokens)
-            loss = self.ContrastiveLoss(img_embedding, text_embedding)
-            self.optimizer_FuseTrans.zero_grad()
-            loss.backward()
-            self.optimizer_FuseTrans.step()
-            running_loss += loss.item()
-        return running_loss
-    
-    def trainhash(self):
-        self.FuseTrans.train()
-        self.ImageMlp.train()
-        self.TextMlp.train()
+        """训练融合模块（实值表示）"""
+        self.ImageTransformer.train()
+        self.TextTransformer.train()
+        self.CrossAttention.train()
+        
         running_loss = 0.0
         for idx, (img, txt, _,_) in enumerate(self.train_loader):
             img, txt = img.to(self.device), txt.to(self.device)
-            temp_tokens = torch.concat((img, txt), dim = 1)
-            temp_tokens = temp_tokens.unsqueeze(0)
-            img_embedding, text_embedding = self.FuseTrans(temp_tokens)
+            
+            # ✅ 清晰的前向传播流程
+            img_enhanced = self.ImageTransformer(img)
+            text_enhanced = self.TextTransformer(txt)
+            img_embedding, text_embedding = self.CrossAttention(img_enhanced, text_enhanced)
+            
+            # 计算损失
+            loss = self.ContrastiveLoss(img_embedding, text_embedding)
+            
+            # 反向传播
+            self.optimizer_Fusion.zero_grad()
+            loss.backward()
+            self.optimizer_Fusion.step()
+            
+            running_loss += loss.item()
+        
+        return running_loss
+    
+    def trainhash(self):
+        """训练哈希函数"""
+        self.ImageTransformer.train()
+        self.TextTransformer.train()
+        self.CrossAttention.train()
+        self.ImageMlp.train()
+        self.TextMlp.train()
+        
+        running_loss = 0.0
+        for idx, (img, txt, _,_) in enumerate(self.train_loader):
+            img, txt = img.to(self.device), txt.to(self.device)
+            
+            # ✅ 第一阶段：单模态增强 + 跨模态融合
+            img_enhanced = self.ImageTransformer(img)
+            text_enhanced = self.TextTransformer(txt)
+            img_embedding, text_embedding = self.CrossAttention(img_enhanced, text_enhanced)
+            
+            # 融合特征的对比损失
             loss1 = self.ContrastiveLoss(img_embedding, text_embedding)
 
-            img_embedding = self.ImageMlp(img_embedding)
-            text_embedding = self.TextMlp(text_embedding)
-            loss2 = self.ContrastiveLoss(img_embedding, text_embedding)
+            # ✅ 第二阶段：哈希映射
+            img_hash = self.ImageMlp(img_embedding)
+            text_hash = self.TextMlp(text_embedding)
+            
+            # 哈希码的对比损失
+            loss2 = self.ContrastiveLoss(img_hash, text_hash)
 
-            loss = loss1  + loss2*0.5
-            self.optimizer_FuseTrans.zero_grad()
+            # 总损失
+            loss = loss1 + loss2 * 0.5
+            
+            # 反向传播
+            self.optimizer_Fusion.zero_grad()
             self.optimizer_ImageMlp.zero_grad()
             self.optimizer_TextMlp.zero_grad()
             loss.backward()
-            self.optimizer_FuseTrans.step()
+            self.optimizer_Fusion.step()
             self.optimizer_ImageMlp.step()
             self.optimizer_TextMlp.step()
+            
             running_loss += loss.item()
         
             self.ImageMlp_scheduler.step()
             self.TextMlp_scheduler.step()
+        
         return running_loss

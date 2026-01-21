@@ -42,11 +42,11 @@ if __name__ == '__main__':
     std_map = round(np.std(total_map), 4)
     i2t_map = round(np.mean(map_i2t),4)
     t2i_map = round(np.mean(map_t2i),4)
-    print("mean_map:{0}, std_map:{1} , i2t:{2}, t2t:{3} .".format(mean_map,std_map,i2t_map,t2i_map))
+    print("mean_map:{0}, std_map:{1} , i2t:{2}, t2i:{3} .".format(mean_map,std_map,i2t_map,t2i_map))
     time_elapsed = time.time() - start_time 
     print(f'Total Time: {int(time_elapsed // 60)}m {int(time_elapsed % 60)}s')
     with open('result.txt', 'a+', encoding='utf-8') as f:
         f.write("[{0}-{1}-{2} epochs]".format(config.dataset, config.hash_lens,config.epoch))
-        f.write("mean:{0}, std:{1},i2t:{2}, t2t:{3}.\n".format(mean_map, std_map,i2t_map,t2i_map))
+        f.write("mean:{0}, std:{1},i2t:{2}, t2i:{3}.\n".format(mean_map, std_map,i2t_map,t2i_map))
 
     
