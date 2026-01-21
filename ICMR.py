@@ -190,10 +190,43 @@ class Solver(object):
         qu_L = np.array(qu_L)
 
         if self.task ==1 or self.task ==3:   # hashing
+            print(f"\n{'='*70}")
+            print(f"🔍 评估阶段 - 哈希码二值化统计")
+            print(f"{'='*70}")
+            
+            # 二值化前的统计
+            print(f"\n📊 二值化前 (Tanh输出):")
+            print(f"   Query集 - 图像哈希码: 形状={qu_BI.shape}, 范围=[{qu_BI.min():.4f}, {qu_BI.max():.4f}]")
+            print(f"   Query集 - 文本哈希码: 形状={qu_BT.shape}, 范围=[{qu_BT.min():.4f}, {qu_BT.max():.4f}]")
+            print(f"   Retrieval集 - 图像哈希码: 形状={re_BI.shape}, 范围=[{re_BI.min():.4f}, {re_BI.max():.4f}]")
+            print(f"   Retrieval集 - 文本哈希码: 形状={re_BT.shape}, 范围=[{re_BT.min():.4f}, {re_BT.max():.4f}]")
+            
             qu_BI = torch.sign(torch.tensor(qu_BI)).cpu().numpy()
             qu_BT = torch.sign(torch.tensor(qu_BT)).cpu().numpy()
             re_BT = torch.sign(torch.tensor(re_BT)).cpu().numpy()
             re_BI = torch.sign(torch.tensor(re_BI)).cpu().numpy()
+            
+            # 二值化后的统计
+            print(f"\n🔄 二值化后 (Sign函数):")
+            print(f"   Query集 - 图像哈希码: 唯一值={np.unique(qu_BI).tolist()}")
+            print(f"   Query集 - 文本哈希码: 唯一值={np.unique(qu_BT).tolist()}")
+            print(f"   Retrieval集 - 图像哈希码: 唯一值={np.unique(re_BI).tolist()}")
+            print(f"   Retrieval集 - 文本哈希码: 唯一值={np.unique(re_BT).tolist()}")
+            
+            # 统计+1和-1的比例
+            qu_BI_ones = (qu_BI == 1).sum() / qu_BI.size * 100
+            qu_BI_minus = (qu_BI == -1).sum() / qu_BI.size * 100
+            print(f"\n📈 Query图像哈希码分布: +1={qu_BI_ones:.2f}%, -1={qu_BI_minus:.2f}%")
+            
+            re_BI_ones = (re_BI == 1).sum() / re_BI.size * 100
+            re_BI_minus = (re_BI == -1).sum() / re_BI.size * 100
+            print(f"📈 Retrieval图像哈希码分布: +1={re_BI_ones:.2f}%, -1={re_BI_minus:.2f}%")
+            
+            # 展示前3个样本的哈希码示例
+            print(f"\n🔍 哈希码示例 (前3个样本, 前10个bits):")
+            for i in range(min(3, len(qu_BI))):
+                print(f"   Query样本{i}: {qu_BI[i][:10].tolist()}")
+            print(f"{'='*70}\n")
         elif self.task ==0 or self.task ==2:  # real value
             qu_BI = torch.tensor(qu_BI).cpu().numpy()
             qu_BT = torch.tensor(qu_BT).cpu().numpy()
@@ -253,6 +286,33 @@ class Solver(object):
             # ✅ 第二阶段：拼接特征并生成哈希码
             fused_feat = torch.cat([img_embedding, text_embedding], dim=1)  # [batch, 1024]
             fused_hash = self.FusionMlp(fused_feat)  # [batch, hash_lens]
+            
+            # 📊 打印哈希码统计信息（每10个batch打印一次）
+            if idx % 10 == 0:
+                print(f"\n{'='*60}")
+                print(f"📊 [Batch {idx}] 哈希码统计信息:")
+                print(f"{'='*60}")
+                print(f"🔢 哈希码形状: {fused_hash.shape}")
+                print(f"📈 哈希码值域: [{fused_hash.min().item():.4f}, {fused_hash.max().item():.4f}]")
+                print(f"📊 哈希码均值: {fused_hash.mean().item():.4f}")
+                print(f"📊 哈希码标准差: {fused_hash.std().item():.4f}")
+                
+                # 统计值分布
+                positive_ratio = (fused_hash > 0).float().mean().item()
+                near_zero_ratio = ((fused_hash > -0.1) & (fused_hash < 0.1)).float().mean().item()
+                print(f"✨ 正值比例: {positive_ratio*100:.2f}%")
+                print(f"⚠️  接近0的值 ([-0.1,0.1]): {near_zero_ratio*100:.2f}%")
+                
+                # 模拟二值化后的统计
+                binary_hash = torch.sign(fused_hash)
+                unique_vals = binary_hash.unique().tolist()
+                print(f"🔄 二值化后的唯一值: {unique_vals}")
+                if len(unique_vals) > 1:
+                    ones_ratio = (binary_hash == 1).float().mean().item()
+                    zeros_ratio = (binary_hash == 0).float().mean().item()
+                    minus_ones_ratio = (binary_hash == -1).float().mean().item()
+                    print(f"   +1: {ones_ratio*100:.2f}%, 0: {zeros_ratio*100:.2f}%, -1: {minus_ones_ratio*100:.2f}%")
+                print(f"{'='*60}\n")
             
             # 拼接特征的哈希码对比损失
             # 由于query和key是同一个hash，这里需要修改损失计算方式
