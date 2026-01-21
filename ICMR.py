@@ -96,15 +96,16 @@ class Solver(object):
             T2I_MAP = []
             start_time = time.time()
             for epoch in range(self.total_epoch):
-                print("epoch:",epoch+1)
+                print(f"\n{'='*60}")
+                print(f"Epoch {epoch+1}/{self.total_epoch}")
+                print(f"{'='*60}")
                 train_loss = self.trainhash()
-                print(train_loss)
                 if((epoch+1)%10==0):
-                    print("Testing...")
+                    print("→ 评估中...")
                     img2text, text2img = self.evaluate() 
                     I2T_MAP.append(img2text)
                     T2I_MAP.append(text2img)
-                    print('I2T:',img2text, ', T2I:',text2img)
+                    print(f'✓ I2T: {img2text:.4f} | T2I: {text2img:.4f} | Avg: {(img2text+text2img)/2:.4f}')
             print(I2T_MAP,T2I_MAP)
             save_checkpoints(self)
             time_elapsed = time.time() - start_time
@@ -190,43 +191,26 @@ class Solver(object):
         qu_L = np.array(qu_L)
 
         if self.task ==1 or self.task ==3:   # hashing
-            print(f"\n{'='*70}")
-            print(f"🔍 评估阶段 - 哈希码二值化统计")
-            print(f"{'='*70}")
+            print(f"\n🔍 哈希码二值化统计:")
             
-            # 二值化前的统计
-            print(f"\n📊 二值化前 (Tanh输出):")
-            print(f"   Query集 - 图像哈希码: 形状={qu_BI.shape}, 范围=[{qu_BI.min():.4f}, {qu_BI.max():.4f}]")
-            print(f"   Query集 - 文本哈希码: 形状={qu_BT.shape}, 范围=[{qu_BT.min():.4f}, {qu_BT.max():.4f}]")
-            print(f"   Retrieval集 - 图像哈希码: 形状={re_BI.shape}, 范围=[{re_BI.min():.4f}, {re_BI.max():.4f}]")
-            print(f"   Retrieval集 - 文本哈希码: 形状={re_BT.shape}, 范围=[{re_BT.min():.4f}, {re_BT.max():.4f}]")
+            # 二值化前的统计（紧凑格式）
+            print(f"  Tanh输出: Query [{qu_BI.min():.3f}, {qu_BI.max():.3f}] | "
+                  f"Retrieval [{re_BI.min():.3f}, {re_BI.max():.3f}]")
             
             qu_BI = torch.sign(torch.tensor(qu_BI)).cpu().numpy()
             qu_BT = torch.sign(torch.tensor(qu_BT)).cpu().numpy()
             re_BT = torch.sign(torch.tensor(re_BT)).cpu().numpy()
             re_BI = torch.sign(torch.tensor(re_BI)).cpu().numpy()
             
-            # 二值化后的统计
-            print(f"\n🔄 二值化后 (Sign函数):")
-            print(f"   Query集 - 图像哈希码: 唯一值={np.unique(qu_BI).tolist()}")
-            print(f"   Query集 - 文本哈希码: 唯一值={np.unique(qu_BT).tolist()}")
-            print(f"   Retrieval集 - 图像哈希码: 唯一值={np.unique(re_BI).tolist()}")
-            print(f"   Retrieval集 - 文本哈希码: 唯一值={np.unique(re_BT).tolist()}")
+            # 二值化后的统计（紧凑格式）
+            qu_ones = (qu_BI == 1).sum() / qu_BI.size * 100
+            re_ones = (re_BI == 1).sum() / re_BI.size * 100
+            print(f"  二值分布: Query +1:{qu_ones:.1f}% | Retrieval +1:{re_ones:.1f}%")
             
-            # 统计+1和-1的比例
-            qu_BI_ones = (qu_BI == 1).sum() / qu_BI.size * 100
-            qu_BI_minus = (qu_BI == -1).sum() / qu_BI.size * 100
-            print(f"\n📈 Query图像哈希码分布: +1={qu_BI_ones:.2f}%, -1={qu_BI_minus:.2f}%")
-            
-            re_BI_ones = (re_BI == 1).sum() / re_BI.size * 100
-            re_BI_minus = (re_BI == -1).sum() / re_BI.size * 100
-            print(f"📈 Retrieval图像哈希码分布: +1={re_BI_ones:.2f}%, -1={re_BI_minus:.2f}%")
-            
-            # 展示前3个样本的哈希码示例
-            print(f"\n🔍 哈希码示例 (前3个样本, 前10个bits):")
-            for i in range(min(3, len(qu_BI))):
-                print(f"   Query样本{i}: {qu_BI[i][:10].tolist()}")
-            print(f"{'='*70}\n")
+            # 仅展示1个样本示例（前16个bits）
+            if len(qu_BI) > 0:
+                print(f"  示例: {qu_BI[0][:16].tolist()}")
+            print()
         elif self.task ==0 or self.task ==2:  # real value
             qu_BI = torch.tensor(qu_BI).cpu().numpy()
             qu_BT = torch.tensor(qu_BT).cpu().numpy()
@@ -265,13 +249,22 @@ class Solver(object):
         return running_loss
     
     def trainhash(self):
-        """训练哈希函数（使用拼接特征）"""
+        """训练哈希函数（使用拼接特征 + 量化损失）"""
         self.ImageTransformer.train()
         self.TextTransformer.train()
         self.CrossAttention.train()
         self.FusionMlp.train()
         
+        alpha = 0.1  # 量化损失权重
         running_loss = 0.0
+        running_q_loss = 0.0
+        running_contrast_loss = 0.0
+        
+        # 用于统计整个epoch的哈希码特性
+        total_extreme_ratio = 0.0
+        total_near_zero_ratio = 0.0
+        num_batches = 0
+        
         for idx, (img, txt, _,_) in enumerate(self.train_loader):
             img, txt = img.to(self.device), txt.to(self.device)
             
@@ -284,43 +277,22 @@ class Solver(object):
             loss1 = self.ContrastiveLoss(img_embedding, text_embedding)
 
             # ✅ 第二阶段：拼接特征并生成哈希码
-            fused_feat = torch.cat([img_embedding, text_embedding], dim=1)  # [batch, 1024]
-            fused_hash = self.FusionMlp(fused_feat)  # [batch, hash_lens]
+            fused_feat = torch.cat([img_embedding, text_embedding], dim=1)
+            fused_hash = self.FusionMlp(fused_feat)
             
-            # 📊 打印哈希码统计信息（每10个batch打印一次）
-            if idx % 10 == 0:
-                print(f"\n{'='*60}")
-                print(f"📊 [Batch {idx}] 哈希码统计信息:")
-                print(f"{'='*60}")
-                print(f"🔢 哈希码形状: {fused_hash.shape}")
-                print(f"📈 哈希码值域: [{fused_hash.min().item():.4f}, {fused_hash.max().item():.4f}]")
-                print(f"📊 哈希码均值: {fused_hash.mean().item():.4f}")
-                print(f"📊 哈希码标准差: {fused_hash.std().item():.4f}")
-                
-                # 统计值分布
-                positive_ratio = (fused_hash > 0).float().mean().item()
+            # ✅ 第三阶段：计算量化损失
+            q_loss = torch.mean((fused_hash - torch.sign(fused_hash.detach()))**2)
+            
+            # 累计统计
+            with torch.no_grad():
+                extreme_ratio = ((fused_hash > 0.8) | (fused_hash < -0.8)).float().mean().item()
                 near_zero_ratio = ((fused_hash > -0.1) & (fused_hash < 0.1)).float().mean().item()
-                print(f"✨ 正值比例: {positive_ratio*100:.2f}%")
-                print(f"⚠️  接近0的值 ([-0.1,0.1]): {near_zero_ratio*100:.2f}%")
-                
-                # 模拟二值化后的统计
-                binary_hash = torch.sign(fused_hash)
-                unique_vals = binary_hash.unique().tolist()
-                print(f"🔄 二值化后的唯一值: {unique_vals}")
-                if len(unique_vals) > 1:
-                    ones_ratio = (binary_hash == 1).float().mean().item()
-                    zeros_ratio = (binary_hash == 0).float().mean().item()
-                    minus_ones_ratio = (binary_hash == -1).float().mean().item()
-                    print(f"   +1: {ones_ratio*100:.2f}%, 0: {zeros_ratio*100:.2f}%, -1: {minus_ones_ratio*100:.2f}%")
-                print(f"{'='*60}\n")
+                total_extreme_ratio += extreme_ratio
+                total_near_zero_ratio += near_zero_ratio
+                num_batches += 1
             
-            # 拼接特征的哈希码对比损失
-            # 由于query和key是同一个hash，这里需要修改损失计算方式
-            # 使用自相关损失或者增强特征一致性
-            loss2 = (fused_hash - fused_hash.detach()).pow(2).mean()  # 简化版，鼓励稳定性
-            
-            # 总损失
-            loss = loss1 + loss2 * 0.1  # 降低loss2权重
+            # ✅ 总损失
+            loss = loss1 + alpha * q_loss
             
             # 反向传播
             self.optimizer_Fusion.zero_grad()
@@ -330,7 +302,19 @@ class Solver(object):
             self.optimizer_Hash.step()
             
             running_loss += loss.item()
+            running_q_loss += q_loss.item()
+            running_contrast_loss += loss1.item()
         
             self.Hash_scheduler.step()
         
-        return running_loss
+        # ✅ Epoch总结（紧凑格式，单行显示）
+        avg_loss = running_loss / len(self.train_loader)
+        avg_q_loss = running_q_loss / len(self.train_loader)
+        avg_contrast = running_contrast_loss / len(self.train_loader)
+        avg_extreme = total_extreme_ratio / num_batches * 100
+        avg_near_zero = total_near_zero_ratio / num_batches * 100
+        
+        print(f"📊 总损失:{avg_loss:.4f} | 对比:{avg_contrast:.4f} | 量化:{avg_q_loss:.4f} | "
+              f"极端值:{avg_extreme:.1f}% | 近零值:{avg_near_zero:.1f}%")
+        
+        return avg_loss
