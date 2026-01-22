@@ -69,6 +69,13 @@ class Solver(object):
         # 原版本：self.ContrastiveLoss = ContrastiveLoss(batch_size=self.batch_size, device=self.device)
         self.ContrastiveLoss = ContrastiveLossBalanced(batch_size=self.batch_size, device=self.device)
         print("✅ Using ContrastiveLossBalanced - Weighted balanced loss from HashNet")
+        
+        # 🆕 渐进式哈希学习参数
+        self.use_progressive_hash = True  # 是否启用渐进式哈希学习
+        self.scale_min = 1.0   # 初始scale（训练开始）
+        self.scale_max = 10.0  # 最大scale（训练结束）
+        if self.use_progressive_hash:
+            print(f"✅ Using Progressive Hash Learning - Scale from {self.scale_min} to {self.scale_max}")
      
      
     def train(self):
@@ -90,7 +97,17 @@ class Solver(object):
             start_time = time.time()
             for epoch in range(self.total_epoch):
                 print("epoch:",epoch+1)
-                train_loss = self.trainhash()
+                
+                # 🆕 计算当前训练进度的scale参数（渐进式哈希学习）
+                if self.use_progressive_hash:
+                    # scale从scale_min逐渐增加到scale_max
+                    progress = epoch / max(self.total_epoch - 1, 1)  # 0到1之间
+                    current_scale = self.scale_min + progress * (self.scale_max - self.scale_min)
+                    print(f"  Progressive scale: {current_scale:.2f} (progress: {progress*100:.1f}%)")
+                else:
+                    current_scale = 1.0
+                    
+                train_loss = self.trainhash(scale=current_scale)
                 print(train_loss)
                 if((epoch+1)%10==0):
                     print("Testing...")
@@ -128,6 +145,9 @@ class Solver(object):
         
         qu_BI, qu_BT, qu_L = [], [], []
         re_BI, re_BT, re_L = [], [], []
+        
+        # 🆕 在测试时使用最大scale值，确保哈希码最接近二值化
+        test_scale = self.scale_max if self.use_progressive_hash else 1.0
       
         with torch.no_grad():
             # Query set
@@ -140,8 +160,9 @@ class Solver(object):
                 img_query, txt_query = self.CrossAttention(img_enhanced, text_enhanced)
                 
                 if self.task == 1 or self.task == 3:
-                    img_query = self.ImageMlp(img_query)
-                    txt_query = self.TextMlp(txt_query)
+                    # 🆕 测试时传入最大scale
+                    img_query = self.ImageMlp(img_query, scale=test_scale)
+                    txt_query = self.TextMlp(txt_query, scale=test_scale)
                 
                 qu_BI.extend(img_query.cpu().numpy())
                 qu_BT.extend(txt_query.cpu().numpy())
@@ -157,8 +178,9 @@ class Solver(object):
                 img_retrieval, txt_retrieval = self.CrossAttention(img_enhanced, text_enhanced)
                 
                 if self.task ==1 or self.task ==3:
-                    img_retrieval = self.ImageMlp(img_retrieval)
-                    txt_retrieval = self.TextMlp(txt_retrieval)
+                    # 🆕 测试时传入最大scale
+                    img_retrieval = self.ImageMlp(img_retrieval, scale=test_scale)
+                    txt_retrieval = self.TextMlp(txt_retrieval, scale=test_scale)
                 
                 re_BI.extend(img_retrieval.cpu().numpy())
                 re_BT.extend(txt_retrieval.cpu().numpy())
@@ -214,8 +236,12 @@ class Solver(object):
         
         return running_loss
     
-    def trainhash(self):
-        """训练哈希函数"""
+    def trainhash(self, scale=1.0):
+        """训练哈希函数
+        
+        Args:
+            scale: 渐进式哈希学习的缩放参数，从1.0（训练开始）逐渐增加到10.0（训练结束）
+        """
         self.ImageTransformer.train()
         self.TextTransformer.train()
         self.CrossAttention.train()
@@ -234,9 +260,9 @@ class Solver(object):
             # 融合特征的对比损失
             loss1 = self.ContrastiveLoss(img_embedding, text_embedding)
 
-            # ✅ 第二阶段：哈希映射
-            img_hash = self.ImageMlp(img_embedding)
-            text_hash = self.TextMlp(text_embedding)
+            # ✅ 第二阶段：哈希映射（🆕 传入scale参数进行渐进式学习）
+            img_hash = self.ImageMlp(img_embedding, scale=scale)
+            text_hash = self.TextMlp(text_embedding, scale=scale)
             
             # 哈希码的对比损失
             loss2 = self.ContrastiveLoss(img_hash, text_hash)

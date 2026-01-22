@@ -144,35 +144,81 @@ class FuseTransEncoder(nn.Module):
 
 
 class ImageMlp(nn.Module):
-    """图像哈希映射网络"""
-    def __init__(self, input_dim=512, hash_lens=64):
+    """
+    图像哈希映射网络 (带渐进式哈希学习)
+    
+    借鉴HashNet的"Deep Learning to Hash by Continuation"思想：
+    - 训练初期：使用较小的scale，输出连续值（易于优化）
+    - 训练中期：逐渐增大scale，输出向-1/+1靠拢
+    - 训练后期：scale很大，输出几乎是二值化的
+    
+    这样可以：
+    1. 避免直接学习离散值的困难
+    2. 保持梯度流畅，训练更稳定
+    3. 最终获得更好的二值哈希码
+    """
+    def __init__(self, input_dim=512, hash_lens=64, use_progressive=True):
         super(ImageMlp, self).__init__()
         self.fc1 = nn.Linear(input_dim, 1024)
         self.fc2 = nn.Linear(1024, hash_lens)
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(0.3)
+        self.use_progressive = use_progressive
         
-    def forward(self, x):  
+    def forward(self, x, scale=1.0):
+        """
+        Args:
+            x: 输入特征 [batch_size, input_dim]
+            scale: 缩放参数，控制输出的"锐度"
+                  - scale=1: 输出较"软"，范围广
+                  - scale=10: 输出很"硬"，接近-1或+1
+        Returns:
+            哈希码表示 [batch_size, hash_lens]
+        """
         x = self.fc1(x)
         x = self.relu(x)
         x = self.dropout(x)
-        x = self.fc2(x)
+        x = self.fc2(x)  # [batch_size, hash_lens]
+        
+        # 🆕 渐进式哈希学习
+        if self.use_progressive and scale > 1.0:
+            # 使用tanh将输出压缩到(-1, 1)，scale控制陡峭程度
+            # scale越大，输出越接近-1或+1
+            x = torch.tanh(scale * x)
+        
         return normalize(x, p=2, dim=1)
 
 class TextMlp(nn.Module):
-    """文本哈希映射网络"""
-    def __init__(self, input_dim=512, hash_lens=64):
+    """
+    文本哈希映射网络 (带渐进式哈希学习)
+    
+    同ImageMlp，支持渐进式哈希码学习
+    """
+    def __init__(self, input_dim=512, hash_lens=64, use_progressive=True):
         super(TextMlp, self).__init__()
         self.fc1 = nn.Linear(input_dim, 1024)
         self.fc2 = nn.Linear(1024, hash_lens)
         self.relu = nn.ReLU(inplace=True)
         self.dropout = nn.Dropout(0.3)
+        self.use_progressive = use_progressive
         
-    def forward(self, x):  
+    def forward(self, x, scale=1.0):
+        """
+        Args:
+            x: 输入特征 [batch_size, input_dim]
+            scale: 缩放参数，控制输出的"锐度"
+        Returns:
+            哈希码表示 [batch_size, hash_lens]
+        """
         x = self.fc1(x)
         x = self.relu(x)
         x = self.dropout(x)
-        x = self.fc2(x)
+        x = self.fc2(x)  # [batch_size, hash_lens]
+        
+        # 🆕 渐进式哈希学习
+        if self.use_progressive and scale > 1.0:
+            x = torch.tanh(scale * x)
+        
         return normalize(x, p=2, dim=1)
 
 
