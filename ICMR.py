@@ -5,7 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from evaluate import  calculate_top_map
 from load_dataset import  load_dataset
-from metric import ContrastiveLoss
+from metric import ContrastiveLoss, WeightedBalanceLoss
 from model import FuseTransEncoder, ImageMlp, TextMlp
 from os import path as osp
 from utils import load_checkpoints, save_checkpoints
@@ -18,6 +18,7 @@ class Solver(object):
         self.total_epoch = config.epoch
         self.dataset  = config.dataset
         self.model_dir = "./checkpoints"
+        self.use_weighted_balance = getattr(config, 'use_weighted_balance', False)
 
         USE_CUDA = torch.cuda.is_available()
         self.device = torch.device(config.device if USE_CUDA else "cpu")
@@ -54,6 +55,7 @@ class Solver(object):
         self.retrieval_loader = data_loader['retrieval']
               
         self.ContrastiveLoss = ContrastiveLoss(batch_size=self.batch_size, device=self.device)
+        self.WeightedBalanceLoss = WeightedBalanceLoss(device=self.device)
      
      
     def train(self):
@@ -178,18 +180,24 @@ class Solver(object):
         self.ImageMlp.train()
         self.TextMlp.train()
         running_loss = 0.0
-        for idx, (img, txt, _,_) in enumerate(self.train_loader):
+        for idx, (img, txt, labels, _) in enumerate(self.train_loader):
             img, txt = img.to(self.device), txt.to(self.device)
+            labels = labels.to(self.device)
             temp_tokens = torch.concat((img, txt), dim = 1)
             temp_tokens = temp_tokens.unsqueeze(0)
             img_embedding, text_embedding = self.FuseTrans(temp_tokens)
             loss1 = self.ContrastiveLoss(img_embedding, text_embedding)
 
-            img_embedding = self.ImageMlp(img_embedding)
-            text_embedding = self.TextMlp(text_embedding)
-            loss2 = self.ContrastiveLoss(img_embedding, text_embedding)
+            img_hash = self.ImageMlp(img_embedding)
+            text_hash = self.TextMlp(text_embedding)
+            
+            # Use HashNet's weighted balance strategy if enabled
+            if self.use_weighted_balance:
+                loss2 = self.WeightedBalanceLoss(img_hash, text_hash, labels, labels)
+            else:
+                loss2 = self.ContrastiveLoss(img_hash, text_hash)
 
-            loss = loss1  + loss2*0.5
+            loss = loss1 + loss2 * 0.5
             self.optimizer_FuseTrans.zero_grad()
             self.optimizer_ImageMlp.zero_grad()
             self.optimizer_TextMlp.zero_grad()

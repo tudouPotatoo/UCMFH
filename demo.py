@@ -20,6 +20,7 @@ if __name__ == '__main__':
     parser.add_argument('--hash_lens', type=int , default=16)
     parser.add_argument('--device', type=str , default="cuda:0", help='cuda device')
     parser.add_argument('--task', type= int, default= 3, help="0 is train real; 1 is train hash; 2 is test real; 3 is test hash")
+    parser.add_argument('--use_weighted_balance', action='store_true', help='Use HashNet weighted balance strategy')
     config = parser.parse_args()
     start_time = time.time()
     Final_mean_MAP = {}

@@ -22,3 +22,50 @@ class ContrastiveLoss(nn.Module):
         loss = torch.sum(loss_partial) / (2 * self.batch_size)
         return loss
 
+
+class WeightedBalanceLoss(nn.Module):
+    """
+    HashNet's weighted balance strategy for handling class imbalance.
+    Based on pairwise_loss_updated from HashNet.
+    """
+    def __init__(self, device='cuda:0'):
+        super(WeightedBalanceLoss, self).__init__()
+        self.device = device
+    
+    def forward(self, outputs1, outputs2, label1, label2):
+        """
+        Args:
+            outputs1: embeddings from first modality (image)
+            outputs2: embeddings from second modality (text)  
+            label1: labels for first modality
+            label2: labels for second modality
+        """
+        # Calculate similarity matrix
+        similarity = (torch.mm(label1.float(), label2.float().t()) > 0).float()
+        
+        # Calculate dot product
+        dot_product = torch.mm(outputs1, outputs2.t())
+        
+        # Calculate loss with stable log-sum-exp trick
+        exp_loss = torch.log(1 + torch.exp(-torch.abs(dot_product))) + \
+                   torch.max(dot_product, torch.zeros_like(dot_product)) - \
+                   similarity * dot_product
+        
+        # Apply weighted balance strategy
+        mask_positive = similarity > 0
+        mask_negative = similarity <= 0
+        
+        S1 = torch.sum(mask_positive.float())  # number of positive pairs
+        S0 = torch.sum(mask_negative.float())  # number of negative pairs  
+        S = S0 + S1  # total pairs
+        
+        # Weighted balance: give higher weight to minority class
+        if S1 > 0:
+            exp_loss[mask_positive] = exp_loss[mask_positive] * (S / S1)
+        if S0 > 0:
+            exp_loss[mask_negative] = exp_loss[mask_negative] * (S / S0)
+        
+        loss = torch.sum(exp_loss) / S
+        
+        return loss
+
