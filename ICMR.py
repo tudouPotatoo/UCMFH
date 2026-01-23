@@ -53,7 +53,9 @@ class Solver(object):
         self.query_loader = data_loader['query']
         self.retrieval_loader = data_loader['retrieval']
               
-        self.ContrastiveLoss = ContrastiveLoss(batch_size=self.batch_size, device=self.device)
+        # 在trainhash阶段使用加权平衡策略
+        self.ContrastiveLoss = ContrastiveLoss(batch_size=self.batch_size, device=self.device, use_weighted_balance=False)
+        self.ContrastiveLossWeighted = ContrastiveLoss(batch_size=self.batch_size, device=self.device, use_weighted_balance=True)
      
      
     def train(self):
@@ -183,11 +185,13 @@ class Solver(object):
             temp_tokens = torch.concat((img, txt), dim = 1)
             temp_tokens = temp_tokens.unsqueeze(0)
             img_embedding, text_embedding = self.FuseTrans(temp_tokens)
-            loss1 = self.ContrastiveLoss(img_embedding, text_embedding)
+            # 使用加权平衡的对比损失
+            loss1 = self.ContrastiveLossWeighted(img_embedding, text_embedding)
 
             img_embedding = self.ImageMlp(img_embedding)
             text_embedding = self.TextMlp(text_embedding)
-            loss2 = self.ContrastiveLoss(img_embedding, text_embedding)
+            # 哈希层也使用加权平衡策略
+            loss2 = self.ContrastiveLossWeighted(img_embedding, text_embedding)
 
             loss = loss1  + loss2*0.5
             self.optimizer_FuseTrans.zero_grad()
