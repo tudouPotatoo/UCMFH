@@ -71,11 +71,13 @@ class Solver(object):
         print("✅ Using ContrastiveLossBalanced - Weighted balanced loss from HashNet")
         
         # 🆕 渐进式哈希学习参数
-        self.use_progressive_hash = True  # 是否启用渐进式哈希学习
+        self.use_progressive_hash = False  # 🔧 关闭渐进式哈希学习（实验表明对UCMFH效果不佳）
         self.scale_min = 1.0   # 初始scale（训练开始）
-        self.scale_max = 3.0   # 🔧 降低最大scale，避免过度饱和（原来是10.0）
+        self.scale_max = 3.0   # 最大scale
         if self.use_progressive_hash:
             print(f"✅ Using Progressive Hash Learning - Scale from {self.scale_min} to {self.scale_max}")
+        else:
+            print(f"✅ Progressive Hash Learning disabled - Using fixed scale=1.0")
      
      
     def train(self):
