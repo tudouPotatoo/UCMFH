@@ -73,7 +73,7 @@ class Solver(object):
         # 🆕 渐进式哈希学习参数
         self.use_progressive_hash = True  # 是否启用渐进式哈希学习
         self.scale_min = 1.0   # 初始scale（训练开始）
-        self.scale_max = 10.0  # 最大scale（训练结束）
+        self.scale_max = 3.0   # 🔧 降低最大scale，避免过度饱和（原来是10.0）
         if self.use_progressive_hash:
             print(f"✅ Using Progressive Hash Learning - Scale from {self.scale_min} to {self.scale_max}")
      
@@ -146,8 +146,11 @@ class Solver(object):
         qu_BI, qu_BT, qu_L = [], [], []
         re_BI, re_BT, re_L = [], [], []
         
-        # 🆕 在测试时使用最大scale值，确保哈希码最接近二值化
+        # 🆕 测试时使用训练末期的最大scale，保持训练-测试一致性
+        # 如果使用渐进式学习，测试时应该用训练末期的scale值
         test_scale = self.scale_max if self.use_progressive_hash else 1.0
+        if self.use_progressive_hash:
+            print(f"  Testing with scale={test_scale:.2f} (consistent with final training scale)")
       
         with torch.no_grad():
             # Query set
